@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Station4U - 지하철 생활 도우미</title>
+  <link rel="stylesheet" href="index.css">
+</head>
+<body>
+  <div class="container">
+    <h1>ᰔ Station4U ᰔ</h1>
+    <p>당신을 위한 지하철 생활 도우미</p>
+
+    <div class="input-group">
+      <label for="departure">출발역</label>
+      <input type="text" id="departure" placeholder="출발역 입력" autocomplete="off" />
+      <div id="departure-list" class="autocomplete-items"></div>
+    </div>
+    <div class="input-group">
+      <label for="arrival">도착역</label>
+      <input type="text" id="arrival" placeholder="도착역 입력" autocomplete="off" />
+      <div id="arrival-list" class="autocomplete-items"></div>
+    </div>
+
+    <button onclick="searchRoute()">경로 검색</button>
+    <div id="stationInfo"></div>
+  </div>
+
+  <div id="map-container">
+    <object id="subway-map" data="images/mapimage.svg" type="image/svg+xml"></object>
+  </div>
+  <div class="zoom-buttons">
+    <button onclick="zoomIn()">확대 🔍</button>
+    <button onclick="zoomOut()">축소 🔍</button>
+  </div>
+
+  <script>
+    let allStations = {};
+    let stationLines = {};
+    let stationNames = [];
+
+    fetch('subway.json')
+      .then(response => response.json())
+      .then(data => {
+        allStations = data;
+        stationLines = {};
+        let namesSet = new Set();
+            for (let line in allStations) {
+            let stations = allStations[line];
+            for (let i = 0; i < stations.length; i++) {
+                let station = stations[i];
+                let name = station.역명;
+
+                if (!namesSet.has(name)) {
+                namesSet.add(name);
+                }
+
+                if (!stationLines[name]) {
+                stationLines[name] = [];
+                }
+
+                stationLines[name].push(line);
+            }
+        }
+        stationNames = Array.from(namesSet).sort();
+        setupAutocomplete('departure', 'departure-list');
+        setupAutocomplete('arrival', 'arrival-list');
+      })
+      .catch(() => alert('데이터 로드 실패...'));
+
+    function setupAutocomplete(inputId, listId) {
+      const input = document.getElementById(inputId);
+      const listDiv = document.getElementById(listId);
+
+      input.addEventListener('input', function () {
+        const val = this.value.trim();
+        listDiv.innerHTML = '';
+        if (!val) return;
+        const results = stationNames.filter(name => name.includes(val));
+        results.forEach(name => {
+          const item = document.createElement('div');
+          item.className = 'autocomplete-item';
+          item.textContent = name;
+          item.onclick = () => {
+            input.value = name;
+            listDiv.innerHTML = '';
+          };
+          listDiv.appendChild(item);
+        });
+      });
+
+      document.addEventListener('click', e => {
+        if (e.target !== input) listDiv.innerHTML = '';
+      });
+    }
+
+    function searchRoute() {
+      const dep = document.getElementById('departure').value.trim();
+      const arr = document.getElementById('arrival').value.trim();
+      const infoDiv = document.getElementById('stationInfo');
+      infoDiv.innerHTML = '';
+
+      if (!dep || !arr) {
+        infoDiv.innerHTML = '<p>출발역과 도착역을 모두 입력하세요.</p>';
+        return;
+      }
+
+      if (Object.keys(allStations).length === 0) {
+        infoDiv.innerHTML = '<p>역 데이터가 아직 로드되지 않았습니다.</p>';
+        return;
+      }
+
+      let found = false;
+
+      for (let line in allStations) {
+        const stations = allStations[line];
+        const startIdx = stations.findIndex(s => s.역명 === dep);
+        const endIdx = stations.findIndex(s => s.역명 === arr);
+
+        if (startIdx !== -1 && endIdx !== -1) {
+          found = true;
+          const route = startIdx < endIdx
+            ? stations.slice(startIdx, endIdx + 1)
+            : stations.slice(endIdx, startIdx + 1).reverse();
+
+          let html = `<h3>${line} 경로 (${dep} → ${arr})</h3>`;
+          route.forEach(st => {
+            html += `
+              <div class="station-box">
+                <div class="station-name">${st.역명}역</div>
+                <div>화장실: ${st.개찰구_안 ? '개찰구 안' : '개찰구 밖'}</div>
+                <div>엘리베이터: ${st.엘리베이터 ? '있음' : '없음'}</div>
+                <div>수유실: ${st.수유실 ? '있음' : '없음'}</div>
+              </div>`;
+          });
+          infoDiv.innerHTML = html;
+          break;
+        }
+      }
+
+      if (!found) {
+        infoDiv.innerHTML = '<p>같은 노선에 있는 역이어야 경로를 찾을 수 있습니다.</p>';
+      }
+    }
+
+    const map = document.getElementById('subway-map');
+    const mapContainer = document.getElementById('map-container');
+    let zoom = 1;
+    let offsetX = 0, offsetY = 0;
+    let Drag = false;
+    let startX, startY;
+
+    function updateMapTransform() {
+      map.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${zoom})`;
+    }
+
+    function zoomIn() {
+      zoom = Math.min(zoom + 0.2, 5);
+      updateMapTransform();
+    }
+
+    function zoomOut() {
+      zoom = Math.max(zoom - 0.2, 0.4);
+      updateMapTransform();
+    }
+
+    mapContainer.addEventListener('mousedown', e => {
+      Drag = true;
+      startX = e.clientX - offsetX;
+      startY = e.clientY - offsetY;
+      mapContainer.style.cursor = 'grabbing';
+    });
+
+    mapContainer.addEventListener('mousemove', e => {
+      if (!Drag) return;
+      offsetX = e.clientX - startX;
+      offsetY = e.clientY - startY;
+      updateMapTransform();
+    });
+
+    mapContainer.addEventListener('mouseup', () => {
+      Drag = false;
+      mapContainer.style.cursor = 'grab';
+    });
+
+    mapContainer.addEventListener('mouseleave', () => {
+      Drag = false;
+      mapContainer.style.cursor = 'grab';
+    });
+  </script>
+</body>
+</html>
